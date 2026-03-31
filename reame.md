@@ -111,6 +111,53 @@ Thứ tự để đảm bảo toàn vẹn khóa ngoại:
 
 Lưu ý: file `transactions_inserts.sql` có kích thước lớn (không đồng bộ được qua extension), cần chạy trực tiếp bằng psql/SQL client khi seed.
 
+### 4.1. Data Flow bắt đầu từ customer (chi tiết)
+Luồng nghiệp vụ có thể đọc theo trục customer như sau:
+
+1. Khởi tạo customer
+- Bản ghi được tạo trong bảng `customers` với `customer_id` là định danh gốc.
+- Các thuộc tính nền tảng gồm hồ sơ cơ bản, `credit_score`, thời điểm tạo (`created_at`).
+
+2. Mở tài khoản cho customer
+- Mỗi customer có thể sở hữu nhiều account trong bảng `accounts`.
+- Liên kết bằng `accounts.customer_id -> customers.customer_id`.
+- Tại bước này hệ thống bắt đầu theo dõi số dư (`balance_usd`) và loại tài khoản (`account_type`).
+
+3. Phát hành thẻ theo tài khoản
+- Mỗi account có thể có nhiều thẻ trong bảng `cards`.
+- Liên kết bằng `cards.account_id -> accounts.account_id`.
+- Đây là lớp phương tiện thanh toán, nhưng dữ liệu giao dịch hiện tại vẫn đi qua trục account.
+
+4. Cấp khoản vay cho customer (nhánh song song)
+- Customer có thể có 0..N khoản vay trong bảng `loans`.
+- Liên kết bằng `loans.customer_id -> customers.customer_id`.
+- Nhánh này phản ánh dư nợ/tín dụng, độc lập với nhánh chi tiêu giao dịch.
+
+5. Ghi nhận giao dịch chi tiêu
+- Khi customer sử dụng tài khoản để thanh toán, giao dịch được ghi vào `transactions`.
+- Mỗi giao dịch bắt buộc tham chiếu:
+    - `transactions.account_id -> accounts.account_id`
+    - `transactions.merchant_id -> merchants.merchant_id`
+- Từ `transactions`, có thể truy ngược toàn bộ ngữ cảnh customer theo chuỗi:
+    `transactions -> accounts -> customers`.
+
+6. Truy vấn phân tích customer 360
+- Gom dữ liệu hồ sơ: `customers`.
+- Gom dữ liệu tài sản thanh toán: `accounts`, `cards`.
+- Gom dữ liệu tín dụng: `loans`.
+- Gom dữ liệu hành vi chi tiêu: `transactions` kết hợp `merchants`.
+
+Tóm tắt theo quan hệ:
+- Gốc định danh: `customers`
+- Phân nhánh tài sản: `customers -> accounts -> cards`
+- Phân nhánh tín dụng: `customers -> loans`
+- Phân nhánh hành vi giao dịch: `customers -> accounts -> transactions -> merchants`
+
+Ý nghĩa kiến trúc:
+- `customers` là thực thể trung tâm để hợp nhất dữ liệu nghiệp vụ.
+- `accounts` đóng vai trò cầu nối giữa hồ sơ khách hàng và dữ liệu giao dịch.
+- Mô hình này hỗ trợ tốt cho các bài toán KYC, scoring, segmentation, fraud screening ở mức dữ liệu quan hệ.
+
 ## 5. Quy mô dữ liệu đầu vào (CSV)
 - `customers.csv`: 50,000 rows
 - `accounts.csv`: 75,000 rows
